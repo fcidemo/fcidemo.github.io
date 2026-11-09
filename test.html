@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Test</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 20px; max-width: 900px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.sub { color: #666; margin: 0 0 18px; }
+  input, button, textarea { font: inherit; }
+  input[type=text] { width: 100%; padding: 7px 9px; border: 1px solid #ccc; border-radius: 6px; }
+  button { padding: 7px 12px; border: 1px solid #ccc; border-radius: 6px; background: #f6f6f4; cursor: pointer; }
+  button:hover { background: #ececea; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .row > input { flex: 1 1 320px; }
+  .hint { font-size: 12px; color: #666; }
+  #status { padding: 10px 12px; border-radius: 6px; margin: 14px 0; white-space: pre-wrap;
+            font: 12px/1.5 ui-monospace, Consolas, monospace; border: 1px solid #ddd; background: #fafaf8; }
+  .ok   { border-color: #0ca30c !important; background: #f2fbf2 !important; }
+  .bad  { border-color: #d03b3b !important; background: #fdf3f3 !important; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+  th, td { border-bottom: 1px solid #e3e3e0; padding: 5px 8px; text-align: left; }
+  th { font-size: 11px; text-transform: uppercase; color: #777; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  textarea { width: 100%; height: 100px; padding: 8px; border: 1px solid #ccc; border-radius: 6px;
+             font: 12px ui-monospace, Consolas, monospace; }
+  details { margin-top: 14px; }
+  pre { background: #fafaf8; border: 1px solid #ddd; border-radius: 6px; padding: 10px;
+        overflow: auto; max-height: 260px; font: 12px ui-monospace, Consolas, monospace; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #131312; color: #eee; }
+    input[type=text], textarea, #status, pre { background: #1c1c1a; color: #eee; border-color: #3a3a37; }
+    button { background: #242422; color: #eee; border-color: #3a3a37; }
+    th, td { border-color: #2e2e2b; }
+    .ok { background: #16241a !important; } .bad { background: #2a1717 !important; }
+  }
+</style>
+</head>
+<body>
+
+<h1>database.json test</h1>
+<p class="sub">Loads the data file and reports exactly what went wrong if it cannot.</p>
+
+<div class="row">
+  <input type="text" id="url" value="./database.json">
+  <button id="go">Load</button>
+</div>
+<div class="row hint">
+  Try:
+  <button data-u="./database.json">same folder</button>
+  <button data-u="../database.json">one level up</button>
+  <button data-u="/database.json">repo root</button>
+  <button id="raw">raw.githubusercontent&hellip;</button>
+</div>
+
+<div id="status">Ready.</div>
+<div id="out"></div>
+
+<details>
+  <summary>Nothing loads? Paste the JSON here instead</summary>
+  <p class="hint">Open database.json on github.com, copy the whole thing, paste it below.
+     If it renders here, the data is fine and the problem is purely how the page reaches the file.</p>
+  <textarea id="paste" placeholder='{"records":[ ... ]}'></textarea>
+  <div class="row" style="margin-top:8px"><button id="parse">Render pasted JSON</button></div>
+</details>
+
+<script>
+const $ = id => document.getElementById(id);
+const statusEl = $('status'), outEl = $('out');
+
+function say(msg, cls) {
+  statusEl.textContent = msg;
+  statusEl.className = cls || '';
+}
+
+async function load(url) {
+  outEl.innerHTML = '';
+  say('Fetching ' + url + ' ...');
+  const started = Date.now();
+  let res;
+  try {
+    res = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
+  } catch (e) {
+    say('NETWORK ERROR after ' + (Date.now() - started) + ' ms\n' + e.message + '\n\n' + diagnose(url, null), 'bad');
+    return;
+  }
+  const body = await res.text();
+  if (!res.ok) {
+    say('HTTP ' + res.status + ' ' + res.statusText + '\n' +
+        'content-type: ' + (res.headers.get('content-type') || '?') + '\n\n' +
+        diagnose(url, res.status) + '\n\nFirst 300 bytes of the response:\n' + body.slice(0, 300), 'bad');
+    return;
+  }
+  let db;
+  try {
+    db = JSON.parse(body);
+  } catch (e) {
+    say('Fetched ' + body.length + ' bytes, but it is not JSON.\n' + e.message +
+        '\n\nThis usually means you got an HTML page (a 404 page, or the GitHub file *viewer* ' +
+        'instead of the file).\n\nFirst 300 bytes:\n' + body.slice(0, 300), 'bad');
+    return;
+  }
+  show(db, url, body.length, Date.now() - started);
+}
+
+function diagnose(url, code) {
+  const lines = ['Likely causes:'];
+  if (code === 404) {
+    lines.push('- The file is not at that path. index.html and database.json must be in the');
+    lines.push('  SAME folder for "./database.json" to work. If index.html is in a subfolder,');
+    lines.push('  use "/database.json" (repo root) instead.');
+    lines.push('- GitHub Pages is not enabled: Settings -> Pages -> deploy from branch.');
+    lines.push('- Pages has not rebuilt yet. It takes a minute after a push.');
+    lines.push('- The device has never pushed successfully, so the file does not exist yet.');
+    lines.push('  Check the serial console: "push: OK" must have appeared at least once.');
+  } else if (code === 401 || code === 403) {
+    lines.push('- The repo is PRIVATE. GitHub Pages only serves private repos on a paid plan,');
+    lines.push('  and raw.githubusercontent.com needs a token for a private repo (never put');
+    lines.push('  a token in a page you publish).');
+    lines.push('- Fix: make the repo public, or keep it private and host the page elsewhere.');
+  } else if (code === null) {
+    lines.push('- Opened with file:// - browsers block fetch() from the filesystem.');
+    lines.push('  Run a local server instead:  python -m http.server 8000');
+    lines.push('- Or a CORS block: raw.githubusercontent.com allows cross-origin reads,');
+    lines.push('  github.com/<user>/<repo>/blob/... does NOT - that is a web page, not a file.');
+  } else {
+    lines.push('- Unexpected status. Check the URL is the RAW file, not the GitHub viewer page.');
+  }
+  lines.push('');
+  lines.push('This page is at: ' + location.href);
+  lines.push('Resolved to:     ' + new URL(url, location.href).href);
+  return lines.join('\n');
+}
+
+function show(db, url, bytes, ms) {
+  const recs = Array.isArray(db) ? db : (db.records || []);
+  say('OK - ' + bytes.toLocaleString() + ' bytes in ' + ms + ' ms\n' +
+      'device: ' + (db.device || '?') + '\n' +
+      'generated: ' + (db.generated || '?') + '\n' +
+      'records: ' + recs.length +
+      (db.total_readings != null ? '  (total ever taken: ' + db.total_readings + ')' : ''), 'ok');
+
+  if (!recs.length) {
+    outEl.innerHTML = '<p>The file loaded but holds no records. ' +
+      'The device pushes after 20 records or 5 minutes, whichever comes first.</p>';
+    return;
+  }
+
+  const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const rows = recs.slice(-50).reverse().map(r =>
+    '<tr><td class="n">' + esc(r.seq) + '</td>' +
+    '<td>' + esc(r.device_ts || '') + '</td>' +
+    '<td>' + esc(r.commodity || '') + '</td>' +
+    '<td class="n">' + esc(r.moisture_pct) + '</td>' +
+    '<td class="n">' + esc(r.temperature_c) + '</td>' +
+    '<td>' + esc(decode(r.raw_b64).split('\n')[0]) + '</td></tr>').join('');
+
+  outEl.innerHTML =
+    '<p>Newest 50 of ' + recs.length + ' records:</p>' +
+    '<table><thead><tr><th>Seq</th><th>Device time</th><th>Commodity</th>' +
+    '<th style="text-align:right">Moisture</th><th style="text-align:right">Temp</th>' +
+    '<th>Raw slip, line 1</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<details open><summary>Newest record, in full</summary><pre>' +
+    esc(JSON.stringify(recs[recs.length - 1], null, 2)) + '</pre></details>' +
+    '<details><summary>Its raw slip, decoded</summary><pre>' +
+    esc(decode(recs[recs.length - 1].raw_b64)) + '</pre></details>';
+}
+
+function decode(b64) {
+  if (!b64) return '';
+  try {
+    const bin = atob(b64);
+    let s = '';
+    for (let i = 0; i < bin.length; i++) {
+      const c = bin.charCodeAt(i);
+      s += (c === 10 || c === 13) ? '\n' : (c >= 32 && c < 127 ? bin[i] : '.');
+    }
+    return s.replace(/\n{2,}/g, '\n').trim();
+  } catch { return '(not valid base64)'; }
+}
+
+$('go').onclick = () => load($('url').value.trim());
+$('url').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+document.querySelectorAll('button[data-u]').forEach(b =>
+  b.onclick = () => { $('url').value = b.dataset.u; load(b.dataset.u); });
+
+$('raw').onclick = () => {
+  const owner = prompt('GitHub username / owner:');
+  if (!owner) return;
+  const repo = prompt('Repository name:');
+  if (!repo) return;
+  const branch = prompt('Branch:', 'main') || 'main';
+  const u = 'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/database.json';
+  $('url').value = u;
+  load(u);
+};
+
+$('parse').onclick = () => {
+  try {
+    show(JSON.parse($('paste').value), '(pasted)', $('paste').value.length, 0);
+  } catch (e) {
+    say('That is not valid JSON: ' + e.message, 'bad');
+  }
+};
+
+// auto-run once on open
+load($('url').value);
+</script>
+</body>
+</html>
