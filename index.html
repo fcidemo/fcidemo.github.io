@@ -506,13 +506,12 @@ function hexDump(r) {
 }
 
 // What the data actually contains decides which parsed fields are shown.
-let HAS = { moisture: false, temp: false, humid: false, commodity: false, meter: false, code: false };
+let HAS = { moisture: false, temp: false, commodity: false, meter: false, code: false };
 function detectFields() {
   const any = f => ROWS.some(f);
   HAS = {
     moisture: any(r => isNum(r.moisture_pct)),
     temp: any(r => isNum(r.temperature_c)),
-    humid: any(r => isNum(r.humidity_pct)),
     commodity: any(r => r.commodity && String(r.commodity).trim()),
     code: any(r => r.code),
     meter: any(r => r.meter_date || r.meter_time),
@@ -673,10 +672,6 @@ function tilesHtml(rows) {
     const lastT = [...rows].reverse().find(r => isNum(r.temperature_c));
     html += t('Latest temperature', lastT ? num(lastT.temperature_c) : '--', '\u00b0C', '');
   }
-  if (HAS.humid) {
-    const lastH = [...rows].reverse().find(r => isNum(r.humidity_pct));
-    html += t('Latest humidity', lastH ? num(lastH.humidity_pct) : '--', '%', '');
-  }
   return html;
 }
 
@@ -690,11 +685,10 @@ function legendHtml(rows) {
 
 // --- charts ----------------------------------------------------------------
 // One card per measured value. A card shows once there are 2+ timestamped
-// readings of that value; humidity always shows, with a note while empty.
+// readings of that value.
 const CHARTS = [
   { id: 'moisture', field: 'moisture_pct',  title: 'Moisture by reading time',    word: 'moisture',    unit: '%',      axis: 'moisture %',     pct: true },
   { id: 'temp',     field: 'temperature_c', title: 'Temperature by reading time', word: 'temperature', unit: '\u00b0C', axis: 'temperature \u00b0C', pct: false },
-  { id: 'humid',    field: 'humidity_pct',  title: 'Humidity by reading time',    word: 'humidity',    unit: '%',      axis: 'humidity %',     pct: true, always: true },
 ];
 
 function drawCharts(rows) {
@@ -702,7 +696,7 @@ function drawCharts(rows) {
     const card = $('card-' + c.id);
     if (!card) return;
     const plottable = rows.filter(r => tsOf(r) && isNum(r[c.field])).length;
-    card.hidden = plottable < 2 && !c.always;
+    card.hidden = plottable < 2;
     if (card.hidden) return;
     $('legend-' + c.id).innerHTML = HAS.commodity && plottable >= 2 ? legendHtml(rows) : '';
     drawChart(c, rows);
@@ -716,12 +710,8 @@ function drawChart(c, rows) {
   const skipped = rows.length - pts.length;
 
   if (pts.length < 2) {
-    host.innerHTML = '<div class="empty">' +
-      (pts.length === 0 && c.id === 'humid'
-        ? 'No humidity values received yet. The meter slip only has moisture and temperature,<br>so this graph fills in once the logger starts sending humidity.'
-        : 'Not enough timestamped readings to plot yet.' +
-          (skipped ? '<br>' + skipped + ' record(s) have no ' + c.word + ' value or no time — they are in the table below.' : '')) +
-      '</div>';
+    host.innerHTML = '<div class="empty">Not enough timestamped readings to plot yet.' +
+      (skipped ? '<br>' + skipped + ' record(s) have no ' + c.word + ' value or no time — they are in the table below.' : '') + '</div>';
     return;
   }
 
