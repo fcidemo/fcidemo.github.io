@@ -109,7 +109,9 @@
   .tick { font-size: 11px; fill: var(--muted); }
   .gridline { stroke: var(--grid); stroke-width: 1; }
   .axisline { stroke: var(--axis); stroke-width: 1; }
+  .series { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
   .dot { stroke: var(--surface-1); stroke-width: 2; cursor: pointer; }
+  .dot:not(:hover) { r: 4; }
   .dot.new { stroke: var(--text-1); }
 
   #tip {
@@ -755,6 +757,17 @@ function drawChart(c, rows) {
          (i === 0 ? 'start' : i === xTicks - 1 ? 'end' : 'middle') + '">' + lbl + '</text>';
   }
   g += '<text class="tick" x="' + P.l + '" y="' + (P.t - 2) + '" text-anchor="start">' + c.axis + '</text>';
+
+  // One line per commodity, in time order, drawn under the dots.
+  const lines = new Map();
+  pts.map((r, i) => i).sort((a, b) => xs[a] - xs[b]).forEach(i => {
+    const k = commodityOf(pts[i]);
+    if (!lines.has(k)) lines.set(k, { color: colorOf(pts[i]), d: [] });
+    lines.get(k).d.push(X(xs[i]).toFixed(1) + ',' + Y(ys[i]).toFixed(1));
+  });
+  lines.forEach(l => {
+    if (l.d.length > 1) g += '<path class="series" d="M' + l.d.join('L') + '" stroke="' + l.color + '"/>';
+  });
 
   pts.forEach((r, i) => {
     g += '<circle class="dot' + (fresh.has(r.seq) ? ' new' : '') + '" data-seq="' + r.seq + '" cx="' + X(xs[i]) +
