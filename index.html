@@ -18,6 +18,7 @@
     --hover:       rgba(11,11,11,0.04);
     --fresh:       rgba(27,175,122,0.18);
     --bad:         #d03b3b;
+    --temp:        #d03b3b;
     --s1: #2a78d6;  --s2: #eb6834;  --s3: #1baf7a;  --s4: #898781;
   }
   @media (prefers-color-scheme: dark) {
@@ -34,6 +35,7 @@
       --hover:     rgba(255,255,255,0.05);
       --fresh:     rgba(25,158,112,0.28);
       --bad:       #f06a6a;
+      --temp:      #f06a6a;
       --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #898781;
     }
   }
@@ -50,6 +52,7 @@
     --hover:     rgba(255,255,255,0.05);
     --fresh:     rgba(25,158,112,0.28);
     --bad:       #f06a6a;
+    --temp:      #f06a6a;
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #898781;
   }
 
@@ -690,7 +693,7 @@ function legendHtml(rows) {
 // readings of that value.
 const CHARTS = [
   { id: 'moisture', field: 'moisture_pct',  title: 'Moisture by reading time',    word: 'moisture',    unit: '%',      axis: 'moisture %',     pct: true },
-  { id: 'temp',     field: 'temperature_c', title: 'Temperature by reading time', word: 'temperature', unit: '\u00b0C', axis: 'temperature \u00b0C', pct: false },
+  { id: 'temp',     field: 'temperature_c', title: 'Temperature by reading time', word: 'temperature', unit: '\u00b0C', axis: 'temperature \u00b0C', pct: false, color: 'var(--temp)' },
 ];
 
 function drawCharts(rows) {
@@ -700,7 +703,7 @@ function drawCharts(rows) {
     const plottable = rows.filter(r => tsOf(r) && isNum(r[c.field])).length;
     card.hidden = plottable < 2;
     if (card.hidden) return;
-    $('legend-' + c.id).innerHTML = HAS.commodity && plottable >= 2 ? legendHtml(rows) : '';
+    $('legend-' + c.id).innerHTML = HAS.commodity && plottable >= 2 && !c.color ? legendHtml(rows) : '';
     drawChart(c, rows);
   });
 }
@@ -762,7 +765,7 @@ function drawChart(c, rows) {
   const lines = new Map();
   pts.map((r, i) => i).sort((a, b) => xs[a] - xs[b]).forEach(i => {
     const k = commodityOf(pts[i]);
-    if (!lines.has(k)) lines.set(k, { color: colorOf(pts[i]), d: [] });
+    if (!lines.has(k)) lines.set(k, { color: c.color || colorOf(pts[i]), d: [] });
     lines.get(k).d.push(X(xs[i]).toFixed(1) + ',' + Y(ys[i]).toFixed(1));
   });
   lines.forEach(l => {
@@ -771,7 +774,7 @@ function drawChart(c, rows) {
 
   pts.forEach((r, i) => {
     g += '<circle class="dot' + (fresh.has(r.seq) ? ' new' : '') + '" data-seq="' + r.seq + '" cx="' + X(xs[i]) +
-         '" cy="' + Y(ys[i]) + '" r="5" fill="' + colorOf(r) + '"/>';
+         '" cy="' + Y(ys[i]) + '" r="5" fill="' + (c.color || colorOf(r)) + '"/>';
   });
 
   host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H +
