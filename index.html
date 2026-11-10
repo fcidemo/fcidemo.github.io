@@ -506,12 +506,13 @@ function hexDump(r) {
 }
 
 // What the data actually contains decides which parsed fields are shown.
-let HAS = { moisture: false, temp: false, commodity: false, meter: false, code: false };
+let HAS = { moisture: false, temp: false, humid: false, commodity: false, meter: false, code: false };
 function detectFields() {
   const any = f => ROWS.some(f);
   HAS = {
     moisture: any(r => isNum(r.moisture_pct)),
     temp: any(r => isNum(r.temperature_c)),
+    humid: any(r => isNum(r.humidity_pct)),
     commodity: any(r => r.commodity && String(r.commodity).trim()),
     code: any(r => r.code),
     meter: any(r => r.meter_date || r.meter_time),
@@ -574,11 +575,12 @@ function render() {
 function buildSkeleton() {
   $('app').innerHTML =
     '<div class="tiles" id="tiles"></div>' +
-    '<div class="card" id="chartcard" hidden>' +
-      '<h2>Moisture by reading time</h2>' +
-      '<div class="cap">One dot per record that contained a moisture value. Hover for details, click a dot to open the record.</div>' +
-      '<div id="legend"></div><div id="chart"></div>' +
-    '</div>' +
+    CHARTS.map(c =>
+      '<div class="card" id="card-' + c.id + '" hidden>' +
+        '<h2>' + c.title + '</h2>' +
+        '<div class="cap">One dot per record that contained a ' + c.word + ' value. Hover for details, click a dot to open the record.</div>' +
+        '<div id="legend-' + c.id + '"></div><div id="chart-' + c.id + '"></div>' +
+      '</div>').join('') +
     '<div class="card">' +
       '<div class="cardhead"><h2>Received data</h2>' +
         '<input type="search" id="q" placeholder="Search the received text" aria-label="Search records"></div>' +
@@ -631,12 +633,7 @@ function update() {
   syncCommodityOptions();
   const rows = visible();
   $('tiles').innerHTML = tilesHtml(rows);
-  const plottable = rows.filter(r => tsOf(r) && isNum(r.moisture_pct)).length;
-  $('chartcard').hidden = plottable < 2;
-  if (plottable >= 2) {
-    $('legend').innerHTML = HAS.commodity ? legendHtml(rows) : '';
-    drawChart(rows);
-  }
+  drawCharts(rows);
   drawTable(rows);
 }
 
@@ -672,6 +669,14 @@ function tilesHtml(rows) {
       t('Mean moisture', mean == null ? '--' : num(mean, 2), '%', m.length + ' with a value') +
       t('Range', m.length ? num(Math.min(...m)) + '\u2013' + num(Math.max(...m)) : '--', m.length ? '%' : '', 'lowest to highest');
   }
+  if (HAS.temp) {
+    const lastT = [...rows].reverse().find(r => isNum(r.temperature_c));
+    html += t('Latest temperature', lastT ? num(lastT.temperature_c) : '--', '\u00b0C', '');
+  }
+  if (HAS.humid) {
+    const lastH = [...rows].reverse().find(r => isNum(r.humidity_pct));
+    html += t('Latest humidity', lastH ? num(lastH.humidity_pct) : '--', '%', '');
+  }
   return html;
 }
 
@@ -683,16 +688,40 @@ function legendHtml(rows) {
     '<span><i class="swatch" style="background:' + (COLORS.get(n) || OTHER) + '"></i>' + esc(n) + '</span>').join('') + '</div>';
 }
 
-// --- chart -----------------------------------------------------------------
-function drawChart(rows) {
-  const host = $('chart');
+// --- charts ----------------------------------------------------------------
+// One card per measured value. A card shows once there are 2+ timestamped
+// readings of that value; humidity always shows, with a note while empty.
+const CHARTS = [
+  { id: 'moisture', field: 'moisture_pct',  title: 'Moisture by reading time',    word: 'moisture',    unit: '%',      axis: 'moisture %',     pct: true },
+  { id: 'temp',     field: 'temperature_c', title: 'Temperature by reading time', word: 'temperature', unit: '\u00b0C', axis: 'temperature \u00b0C', pct: false },
+  { id: 'humid',    field: 'humidity_pct',  title: 'Humidity by reading time',    word: 'humidity',    unit: '%',      axis: 'humidity %',     pct: true, always: true },
+];
+
+function drawCharts(rows) {
+  CHARTS.forEach(c => {
+    const card = $('card-' + c.id);
+    if (!card) return;
+    const plottable = rows.filter(r => tsOf(r) && isNum(r[c.field])).length;
+    card.hidden = plottable < 2 && !c.always;
+    if (card.hidden) return;
+    $('legend-' + c.id).innerHTML = HAS.commodity && plottable >= 2 ? legendHtml(rows) : '';
+    drawChart(c, rows);
+  });
+}
+
+function drawChart(c, rows) {
+  const host = $('chart-' + c.id);
   if (!host) return;
-  const pts = rows.filter(r => tsOf(r) && isNum(r.moisture_pct));
+  const pts = rows.filter(r => tsOf(r) && isNum(r[c.field]));
   const skipped = rows.length - pts.length;
 
   if (pts.length < 2) {
-    host.innerHTML = '<div class="empty">Not enough timestamped readings to plot yet.' +
-      (skipped ? '<br>' + skipped + ' record(s) have no moisture value or no time — they are in the table below.' : '') + '</div>';
+    host.innerHTML = '<div class="empty">' +
+      (pts.length === 0 && c.id === 'humid'
+        ? 'No humidity values received yet. The meter slip only has moisture and temperature,<br>so this graph fills in once the logger starts sending humidity.'
+        : 'Not enough timestamped readings to plot yet.' +
+          (skipped ? '<br>' + skipped + ' record(s) have no ' + c.word + ' value or no time — they are in the table below.' : '')) +
+      '</div>';
     return;
   }
 
@@ -701,15 +730,16 @@ function drawChart(rows) {
   const iw = W - P.l - P.r, ih = H - P.t - P.b;
 
   const xs = pts.map(r => tsOf(r).getTime());
-  const ys = pts.map(r => +r.moisture_pct);
+  const ys = pts.map(r => +r[c.field]);
   let x0 = Math.min(...xs), x1 = Math.max(...xs);
   if (x0 === x1) { x0 -= 36e5; x1 += 36e5; }
 
   // Round the y domain to a step that gives whole-number labels, so a
-  // gridline's label is its actual value.
+  // gridline's label is its actual value. Percentages never go below 0.
   const span = Math.max(Math.max(...ys) - Math.min(...ys), 1);
   const step = [0.5, 1, 2, 2.5, 5, 10, 20, 50].find(s => span / s <= 6) || 100;
-  const yMin = Math.max(0, Math.floor((Math.min(...ys) - step / 2) / step) * step);
+  let yMin = Math.floor((Math.min(...ys) - step / 2) / step) * step;
+  if (c.pct) yMin = Math.max(0, yMin);
   const yMax = Math.ceil((Math.max(...ys) + step / 2) / step) * step;
   const dp = step < 1 ? 1 : 0;
 
@@ -734,7 +764,7 @@ function drawChart(rows) {
     g += '<text class="tick" x="' + x + '" y="' + (P.t + ih + 18) + '" text-anchor="' +
          (i === 0 ? 'start' : i === xTicks - 1 ? 'end' : 'middle') + '">' + lbl + '</text>';
   }
-  g += '<text class="tick" x="' + P.l + '" y="' + (P.t - 2) + '" text-anchor="start">moisture %</text>';
+  g += '<text class="tick" x="' + P.l + '" y="' + (P.t - 2) + '" text-anchor="start">' + c.axis + '</text>';
 
   pts.forEach((r, i) => {
     g += '<circle class="dot' + (fresh.has(r.seq) ? ' new' : '') + '" data-seq="' + r.seq + '" cx="' + X(xs[i]) +
@@ -742,19 +772,23 @@ function drawChart(rows) {
   });
 
   host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H +
-                   '" role="img" aria-label="Moisture percentage by reading time">' + g + '</svg>' +
+                   '" role="img" aria-label="' + c.title + '">' + g + '</svg>' +
                    (skipped ? '<div class="cap" style="margin:8px 0 0">' + skipped +
-                              ' record(s) without a moisture value or time are only in the table.</div>' : '');
+                              ' record(s) without a ' + c.word + ' value or time are only in the table.</div>' : '');
+
+  // the other measured values of the same record, for the tooltip
+  const others = r => CHARTS.filter(o => o !== c && isNum(r[o.field]))
+    .map(o => num(r[o.field]) + (o.unit === '%' ? '% ' + o.word : o.unit)).join(' · ');
 
   const bySeq = new Map(pts.map(r => [r.seq, r]));
   const tip = $('tip');
   host.querySelectorAll('.dot').forEach(el => {
     const r = bySeq.get(+el.dataset.seq);
     el.addEventListener('mouseenter', () => {
-      tip.innerHTML = '<b>' + num(r.moisture_pct) + '% moisture</b><br>' +
+      const o = others(r);
+      tip.innerHTML = '<b>' + num(r[c.field]) + (c.unit === '%' ? '% ' + c.word : ' ' + c.unit) + '</b><br>' +
         esc(commodityOf(r)) + (r.code ? ' <span class="m">(' + esc(r.code) + ')</span>' : '') + '<br>' +
-        '<span class="m">' + fmtTime(tsOf(r)) +
-        (isNum(r.temperature_c) ? ' · ' + num(r.temperature_c) + '°C' : '') +
+        '<span class="m">' + fmtTime(tsOf(r)) + (o ? ' · ' + o : '') +
         '<br>seq ' + esc(r.seq) + ' · click to open slip</span>';
       tip.style.opacity = 1;
       el.setAttribute('r', 7);
@@ -976,7 +1010,7 @@ setInterval(() => { if (DEVICE && !document.hidden && !pushing) devStatus(); }, 
 let resizeTimer = null;
 addEventListener('resize', () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { if (built) drawChart(visible()); }, 150);
+  resizeTimer = setTimeout(() => { if (built) drawCharts(visible()); }, 150);
 });
 setInterval(paintPill, 1000);
 
